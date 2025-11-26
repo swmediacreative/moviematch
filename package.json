@@ -1,0 +1,9 @@
+{
+  "name": "movie-match",
+  "version": "1.0.0",
+  "main": "api/chat.js",
+  "type": "module",
+  "dependencies": {
+    "openai": "^4.0.0"
+  }
+}

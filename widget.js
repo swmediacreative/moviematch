@@ -1,35 +1,35 @@
 // public/widget.js
 (function() {
-  const chatBtn = document.createElement('div');
-  chatBtn.id = 'movie-match-bubble';
-  chatBtn.innerText = '🎬 Chat';
-  Object.assign(chatBtn.style, {
-    position: 'fixed', bottom: '20px', right: '20px',
-    background: '#222', color: '#fff', padding: '12px 16px',
-    borderRadius: '30px', cursor: 'pointer', fontWeight: 'bold',
-    zIndex: 9999, boxShadow: '0 2px 10px rgba(0,0,0,0.3)'
-  });
-  document.body.appendChild(chatBtn);
+  // Create a container element where chat will appear
+  const container = document.getElementById('movie-match');
+  if (!container) {
+    console.error("Movie Match container not found. Add <div id='movie-match'></div> to your page.");
+    return;
+  }
 
-  const chatBox = document.createElement('div');
-  Object.assign(chatBox.style, {
-    position: 'fixed', bottom: '80px', right: '20px',
-    width: '320px', height: '420px', background: '#111',
-    color: '#fff', borderRadius: '10px', padding: '10px',
-    display: 'none', flexDirection: 'column', zIndex: 9999
-  });
-  chatBox.innerHTML = `
-    <div style="flex:1;overflow:auto;font-family:sans-serif;font-size:14px;" id="chat-log"></div>
-    <input id="chat-input" placeholder="Type a message..." style="width:100%;padding:8px;border:none;border-radius:8px;margin-top:6px;">
+  // Chat box structure
+  container.innerHTML = `
+    <div style="
+      width:100%;
+      max-width:400px;
+      height:500px;
+      background:#111;
+      color:#fff;
+      border-radius:10px;
+      padding:10px;
+      display:flex;
+      flex-direction:column;
+      font-family:sans-serif;
+      box-shadow:0 4px 20px rgba(0,0,0,0.3);
+    ">
+      <div style="flex:1;overflow:auto;font-size:14px;" id="chat-log"></div>
+      <input id="chat-input" placeholder="Type a message..." 
+        style="width:100%;padding:8px;border:none;border-radius:8px;margin-top:6px;background:#222;color:#fff;">
+    </div>
   `;
-  document.body.appendChild(chatBox);
 
-  chatBtn.onclick = () => {
-    chatBox.style.display = chatBox.style.display === 'none' ? 'flex' : 'none';
-  };
-
-  const log = document.getElementById('chat-log');
-  const input = document.getElementById('chat-input');
+  const log = container.querySelector('#chat-log');
+  const input = container.querySelector('#chat-input');
 
   async function sendMessage(text) {
     const userMsg = `<div style="margin:5px 0;"><b>You:</b> ${text}</div>`;

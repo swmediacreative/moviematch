@@ -5,10 +5,27 @@ const openai = new OpenAI({
 });
 
 export default async function handler(req, res) {
-  try {
-    const { messages } = req.body;
+  // ✅ Manually parse the body if undefined
+  let body = req.body;
+  if (!body) {
+    try {
+      const text = await new Promise((resolve, reject) => {
+        let data = "";
+        req.on("data", chunk => data += chunk);
+        req.on("end", () => resolve(data));
+        req.on("error", reject);
+      });
+      body = JSON.parse(text);
+    } catch (err) {
+      console.error("Body parse error:", err);
+      return res.status(400).json({ reply: "Invalid request body" });
+    }
+  }
 
-    // ✨ Add a random phrase for variation each time
+  const { messages } = body;
+
+  try {
+    // ✨ Add a randomizing phrase
     const randomPhrases = [
       "Let’s spin the cinematic wheel!",
       "Roll the director’s dice!",
@@ -17,7 +34,6 @@ export default async function handler(req, res) {
     ];
     const phrase = randomPhrases[Math.floor(Math.random() * randomPhrases.length)];
 
-    // 🎞️ Add this to the system prompt so every chat is unique
     const systemPrompt = `
 ${phrase}
 You are Movie Match, a witty film expert who gives exactly one movie recommendation per chat,
@@ -30,8 +46,8 @@ Keep it conversational and short.
 `;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",   // or "gpt-4o-mini" if using a smaller model
-      temperature: 0.9,  // 🔥 makes results more random
+      model: "gpt-5",
+      temperature: 0.9,
       top_p: 1,
       messages: [
         { role: "system", content: systemPrompt },
@@ -41,6 +57,7 @@ Keep it conversational and short.
 
     const reply = completion.choices[0].message.content;
     res.status(200).json({ reply });
+
   } catch (error) {
     console.error("Movie Match API Error:", error);
     res.status(500).json({

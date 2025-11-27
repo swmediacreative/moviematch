@@ -46,7 +46,7 @@ Keep it conversational and short.
 `;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-5",
+      model: "gpt-4o-mini",
       temperature: 0.9,
       top_p: 1,
       messages: [

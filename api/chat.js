@@ -32,15 +32,21 @@ export default async function handler(req, res) {
   try {
     // --- Add a random phrase for variation ---
     const randomPhrases = [
-      "Let’s spin the cinematic wheel!",
-      "Roll the director’s dice!",
-      "Shuffle the film deck!",
-      "Let fate pick a reel!",
-    ];
-    const phrase = randomPhrases[Math.floor(Math.random() * randomPhrases.length)];
+  "Let’s spin the cinematic wheel!",
+  "Roll the director’s dice!",
+  "Shuffle the film deck!",
+  "Let fate pick a reel!",
+];
 
-    const systemPrompt = `
-${phrase}
+// add random emojis and numeric seeds for true variation
+const emojiSet = ["🎬", "🎞️", "🍿", "🎥", "📽️", "🎦"];
+const emoji = emojiSet[Math.floor(Math.random() * emojiSet.length)];
+const phrase = randomPhrases[Math.floor(Math.random() * randomPhrases.length)];
+const seed = Math.floor(Math.random() * 100000);
+
+const systemPrompt = `
+${emoji} ${phrase} (session ${seed})
+
 You are Movie Match, a witty film expert who gives exactly one movie recommendation per chat,
 introduced as "Here's today's Choice!". Each reply includes:
 • a short, spoiler-free summary
@@ -49,6 +55,7 @@ introduced as "Here's today's Choice!". Each reply includes:
 • and a fun trivia fact.
 Keep it conversational, punchy, and spoiler-free.
 `;
+
 
     // --- Call OpenAI ---
     const completion = await openai.chat.completions.create({

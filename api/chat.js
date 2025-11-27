@@ -56,10 +56,10 @@ Avoid 'The Grand Budapest Hotel' unless it's directly relevant.
 
 Respond using this simple HTML structure:
 <h2 class="movie-title">Here's today's Choice!<br><span class="film-name">[Movie Title]</span></h2>
-<p><b>Summary:</b><br>[1–2 sentence summary]</p>
-<p><b>Why Watch:</b><br>[1 sentence reason]</p>
-<p><b>Where to Watch:</b><br>[short viewing info]</p>
-<p><b>Trivia:</b><br>[fun fact]</p>
+<p><b>Summary:[1–2 sentence summary]</p>
+<p><b>Why Watch:[1 sentence reason]</p>
+<p><b>Where to Watch:[short viewing info]</p>
+<p><b>Trivia:[fun fact]</p>
 
 Do NOT use markdown or extra commentary outside this structure.
 Keep it witty, cinematic, and concise.

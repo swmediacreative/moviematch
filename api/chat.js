@@ -30,7 +30,7 @@ async function getCastFromTMDB(movieTitle) {
 
 export default async function handler(req, res) {
   // --- CORS headers ---
-  res.setHeader("Access-Control-Allow-Origin", "https://talkmobility.co.uk");
+  res.setHeader("Access-Control-Allow-Origin", "https://moviematch.uk");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 

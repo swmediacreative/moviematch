@@ -1,9 +1,14 @@
 // pages/api/chat.js
 import fetch from "node-fetch";
 
+export const config = {
+  api: {
+    bodyParser: false, // disable built-in body parsing
+  },
+};
+
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 
-// ✅ TMDB official genre IDs
 const GENRE_IDS = {
   Action: 28,
   Adventure: 12,
@@ -20,47 +25,48 @@ const GENRE_IDS = {
   Mystery: 9648,
   Romance: 10749,
   "Science Fiction": 878,
-  "Sci-Fi": 878, // alias
+  "Sci-Fi": 878,
   Thriller: 53,
   War: 10752,
   Western: 37,
 };
 
 export default async function handler(req, res) {
-  // 🧩 CORS setup so widget can call this endpoint
+  // --- CORS so the embed can reach this endpoint ---
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
-    // ✅ Safely parse JSON body (works on Edge + Node runtimes)
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    // --- Read and parse JSON manually ---
+    const buffers = [];
+    for await (const chunk of req) buffers.push(chunk);
+    const rawBody = Buffer.concat(buffers).toString();
+    const body = rawBody ? JSON.parse(rawBody) : {};
     const { messages } = body || {};
 
     if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({
-        reply: `<p>⚠️ Missing or invalid 'messages' in request body.</p>`,
-      });
+      return res
+        .status(400)
+        .json({ reply: `<p>⚠️ Missing or invalid 'messages' in request body.</p>` });
     }
 
     const userMessage = messages[messages.length - 1].content;
 
-    // 🎯 Detect genre from user text
+    // --- Genre detection ---
     const matchedGenreKey = Object.keys(GENRE_IDS).find((g) =>
       userMessage.toLowerCase().includes(g.toLowerCase())
     );
-
     let genreId = matchedGenreKey ? GENRE_IDS[matchedGenreKey] : null;
 
-    // If no genre matched, pick a random one
     if (!genreId) {
       const genreKeys = Object.keys(GENRE_IDS);
       const randomKey = genreKeys[Math.floor(Math.random() * genreKeys.length)];
       genreId = GENRE_IDS[randomKey];
     }
 
-    // 🎬 Fetch a random page of results from TMDB Discover
+    // --- Fetch from TMDB ---
     const page = Math.floor(Math.random() * 5) + 1;
     const discoverUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=en-US&with_genres=${genreId}&include_adult=false&page=${page}`;
 
@@ -69,29 +75,25 @@ export default async function handler(req, res) {
 
     if (!discoverData.results?.length) {
       return res.json({
-        reply: `<p>Couldn't find any films in that genre. Try another one!</p>`,
+        reply: `<p>No films found for that genre — try another!</p>`,
       });
     }
 
-    // 🎞️ Pick a random movie
     const movie =
       discoverData.results[
         Math.floor(Math.random() * discoverData.results.length)
       ];
 
-    // 🖼️ Add poster image if available
     const poster = movie.poster_path
       ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
       : null;
 
-    // 🧠 Fetch detailed info (tagline, release date, etc.)
     const detailsRes = await fetch(
       `https://api.themoviedb.org/3/movie/${movie.id}?api_key=${TMDB_API_KEY}&language=en-US`
     );
     const details = await detailsRes.json();
 
-    // ✍️ Compose text fields
-    const genreName = matchedGenreKey || "movie";
+    const genreName = matchedGenreKey || "Movie";
     const title = movie.title || movie.name || "Untitled";
     const summary = movie.overview || "No summary available.";
     const tagline =
@@ -101,7 +103,6 @@ export default async function handler(req, res) {
       movie.release_date?.split("-")[0] || "unknown year"
     } • Rated ${movie.vote_average}/10 on TMDB.`;
 
-    // 🧩 Build the chatbot-friendly HTML
     const reply = `
       <h2 class='movie-title'>Here's today's Choice!<br>
       <span class='film-name'>${title}</span></h2>
@@ -116,12 +117,11 @@ export default async function handler(req, res) {
       <p><b>Trivia</b> ${trivia}</p>
     `;
 
-    // ✅ Return the reply to the frontend widget
     res.status(200).json({ reply });
   } catch (err) {
     console.error("TMDB API Error:", err);
-    res.status(500).json({
-      reply: `<p>⚠️ Oops! ${err.message || "Something went wrong."}</p>`,
-    });
+    res
+      .status(500)
+      .json({ reply: `<p>⚠️ Oops! ${err.message || "Something went wrong."}</p>` });
   }
 }

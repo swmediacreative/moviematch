@@ -4,46 +4,53 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// 🎥 Helper function to get top 5 cast members from TMDB
-async function getCastFromTMDB(movieTitle) {
+// 🧩 Helper: fetch cast + poster from TMDB
+async function getTMDBInfo(movieTitle) {
   try {
     const TMDB_API_KEY = process.env.TMDB_API_KEY;
     const searchRes = await fetch(
       `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(movieTitle)}`
     );
     const searchData = await searchRes.json();
-    if (!searchData.results?.length) return null;
+    if (!searchData.results?.length) return {};
 
-    const movieId = searchData.results[0].id;
+    const movie = searchData.results[0];
+    const movieId = movie.id;
+    const posterPath = movie.poster_path
+      ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
+      : null;
+
     const creditsRes = await fetch(
       `https://api.themoviedb.org/3/movie/${movieId}/credits?api_key=${TMDB_API_KEY}`
     );
     const creditsData = await creditsRes.json();
-
     const castList = creditsData.cast?.slice(0, 5).map(a => a.name).join(", ");
-    return castList || null;
+
+    return { castList, posterPath };
   } catch (err) {
-    console.error("TMDB cast fetch failed:", err);
-    return null;
+    console.error("TMDB fetch failed:", err);
+    return {};
   }
 }
 
 export default async function handler(req, res) {
-  // --- CORS headers ---
+  // --- CORS for Hostinger ---
   res.setHeader("Access-Control-Allow-Origin", "https://moviematch.uk");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST")
+    return res.status(405).json({ error: "Method not allowed" });
 
   try {
     const { messages } = req.body;
     if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({ error: "Invalid request: messages missing" });
+      return res
+        .status(400)
+        .json({ error: "Invalid request: messages missing" });
     }
 
-    // 🧠 Movie Match system context
     const systemPrompt = `
 You are Movie Match, a witty, spoiler-free film expert.
 You always respond in HTML format like this:
@@ -57,13 +64,8 @@ You always respond in HTML format like this:
 Keep it concise, engaging, and spoiler-free.
 `;
 
-    // Ensure the first system message is our Movie Match personality
-    const conversation = [
-      { role: "system", content: systemPrompt },
-      ...messages
-    ];
+    const conversation = [{ role: "system", content: systemPrompt }, ...messages];
 
-    // --- Call OpenAI ---
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: conversation,
@@ -73,30 +75,51 @@ Keep it concise, engaging, and spoiler-free.
 
     let reply = completion.choices?.[0]?.message?.content?.trim() || "";
 
-    // --- Extract movie title from reply ---
-    const movieTitleMatch = reply.match(/<span[^>]*class=['"]film-name['"][^>]*>(.*?)<\/span>/i);
-    const movieTitle = movieTitleMatch ? movieTitleMatch[1] : null;
+    // --- Extract title & current poster (if any)
+    const titleMatch = reply.match(/<span[^>]*film-name[^>]*>(.*?)<\/span>/i);
+    const movieTitle = titleMatch ? titleMatch[1] : null;
+    const existingPoster = (reply.match(/<img[^>]*src=['"](.*?)['"]/i) || [])[1];
 
-    // --- Fetch cast from TMDB ---
     if (movieTitle) {
-      const castList = await getCastFromTMDB(movieTitle);
+      const { castList, posterPath } = await getTMDBInfo(movieTitle);
+
+      // Insert or replace cast
       if (castList) {
-        // Insert Cast section right after Summary if not already present
         if (!reply.includes("<b>Cast</b>")) {
           reply = reply.replace(
             /(<p><b>Summary<\/b>[^<]*<\/p>)/i,
             `$1<p><b>Cast</b> ${castList}</p>`
           );
         } else {
-          // Replace if GPT provided an estimated cast
-          reply = reply.replace(/<p><b>Cast<\/b>[^<]*<\/p>/i, `<p><b>Cast</b> ${castList}</p>`);
+          reply = reply.replace(
+            /<p><b>Cast<\/b>[^<]*<\/p>/i,
+            `<p><b>Cast</b> ${castList}</p>`
+          );
+        }
+      }
+
+      // Insert or replace poster
+      if (posterPath) {
+        if (existingPoster) {
+          reply = reply.replace(
+            /<img[^>]*src=['"][^'"]+['"][^>]*>/i,
+            `<img src='${posterPath}' alt='${movieTitle} poster'>`
+          );
+        } else {
+          // no poster in GPT reply, insert after heading
+          reply = reply.replace(
+            /(<h2[^>]*>[\s\S]*?<\/h2>)/i,
+            `$1\n<img src='${posterPath}' alt='${movieTitle} poster'>`
+          );
         }
       }
     }
 
-    return res.status(200).json({ reply });
+    res.status(200).json({ reply });
   } catch (error) {
     console.error("Movie Match API error:", error);
-    res.status(500).json({ error: "Server error while contacting OpenAI or TMDB." });
+    res
+      .status(500)
+      .json({ error: "Server error while contacting OpenAI or TMDB." });
   }
 }

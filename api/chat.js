@@ -3,7 +3,7 @@ import fetch from "node-fetch";
 
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 
-// ✅ Genre mapping (TMDB official IDs)
+// ✅ TMDB official genre IDs
 const GENRE_IDS = {
   Action: 28,
   Adventure: 12,
@@ -21,7 +21,6 @@ const GENRE_IDS = {
   Romance: 10749,
   "Science Fiction": 878,
   "Sci-Fi": 878, // alias
-  TVMovie: 10770,
   Thriller: 53,
   War: 10752,
   Western: 37,
@@ -39,15 +38,15 @@ export default async function handler(req, res) {
 
     let genreId = matchedGenreKey ? GENRE_IDS[matchedGenreKey] : null;
 
-    // If no explicit genre found, pick random
+    // If no genre matched, pick a random one
     if (!genreId) {
       const genreKeys = Object.keys(GENRE_IDS);
       const randomKey = genreKeys[Math.floor(Math.random() * genreKeys.length)];
       genreId = GENRE_IDS[randomKey];
     }
 
-    // 🎬 Fetch random movie from TMDB Discover
-    const page = Math.floor(Math.random() * 5) + 1; // randomize between first 5 pages
+    // 🎬 Fetch a random page of results for variety
+    const page = Math.floor(Math.random() * 5) + 1;
     const discoverUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=en-US&with_genres=${genreId}&include_adult=false&page=${page}`;
 
     const discoverRes = await fetch(discoverUrl);
@@ -59,30 +58,39 @@ export default async function handler(req, res) {
       });
     }
 
+    // 🎞️ Pick a random movie from the results
     const movie =
       discoverData.results[
         Math.floor(Math.random() * discoverData.results.length)
       ];
 
-    // 🧠 Get full details for richer info
+    // 🖼️ Add poster image if available
+    const poster = movie.poster_path
+      ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
+      : null;
+
+    // 🧠 Fetch more details for tagline and rating
     const detailsRes = await fetch(
       `https://api.themoviedb.org/3/movie/${movie.id}?api_key=${TMDB_API_KEY}&language=en-US`
     );
     const details = await detailsRes.json();
 
-    // ✍️ Build witty reply
+    // ✍️ Build response fields
+    const genreName = matchedGenreKey || "movie";
+    const title = movie.title || movie.name || "Untitled";
+    const summary = movie.overview || "No summary available.";
     const tagline =
       details.tagline ||
-      `A ${matchedGenreKey || "film"} that movie lovers keep talking about.`;
-    const summary = movie.overview || "No summary available.";
+      `A must-watch ${genreName.toLowerCase()} that fans still talk about.`;
     const trivia = `Released in ${
       movie.release_date?.split("-")[0] || "unknown year"
-    } • Rated ${movie.vote_average}/10 by TMDB users.`;
+    } • Rated ${movie.vote_average}/10 on TMDB.`;
 
-    // 🧩 HTML structure for your chatbot display
+    // 🧩 Build HTML reply (compatible with your Movie Match front-end)
     const reply = `
       <h2 class='movie-title'>Here's today's Choice!<br>
-      <span class='film-name'>${movie.title}</span></h2>
+      <span class='film-name'>${title}</span></h2>
+      ${poster ? `<img src="${poster}" alt="${title} poster" style="max-width:100%;border-radius:10px;margin-bottom:10px;">` : ""}
       <p><b>Summary</b> ${summary}</p>
       <p><b>Why Watch</b> ${tagline}</p>
       <p><b>Where to Watch</b> You can usually find this on major streaming platforms.</p>

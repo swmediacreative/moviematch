@@ -1,89 +1,42 @@
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// pages/api/chat.js
+import fetch from "node-fetch";
 
 export default async function handler(req, res) {
-  // --- Allow cross-origin calls from your Hostinger site ---
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
+  const { messages } = await req.body;
+  const userMessage = messages[messages.length - 1].content;
+  const genreMatch = userMessage.match(/recommend (?:a )?([\w\s-]+) movie/i);
+  const genreQuery = genreMatch ? genreMatch[1] : "popular";
 
-  // --- Parse request body safely ---
-  let body;
   try {
-    body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
+    // === TMDB SEARCH ===
+    const tmdbRes = await fetch(
+      `https://api.themoviedb.org/3/search/movie?api_key=${process.env.TMDB_API_KEY}&query=${encodeURIComponent(
+        genreQuery
+      )}&include_adult=false&language=en-US&page=1`
+    );
+    const tmdbData = await tmdbRes.json();
+
+    if (!tmdbData.results?.length) {
+      return res.json({ reply: `<p>No results found for "${genreQuery}". Try another genre!</p>` });
+    }
+
+    const movie = tmdbData.results[Math.floor(Math.random() * tmdbData.results.length)];
+    const movieDetails = await fetch(
+      `https://api.themoviedb.org/3/movie/${movie.id}?api_key=${process.env.TMDB_API_KEY}&language=en-US`
+    ).then(r => r.json());
+
+    // === FORMAT REPLY ===
+    const reply = `
+      <h2 class='movie-title'>Here's today's Choice!<br><span class='film-name'>${movie.title}</span></h2>
+      <p><b>Summary</b> ${movie.overview || "No synopsis available."}</p>
+      <p><b>Why Watch</b> ${movieDetails.tagline || "It’s a fan favorite!"}</p>
+      <p><b>Where to Watch</b> Check your favorite streaming service or rent online.</p>
+      <p><b>Trivia</b> Released in ${movie.release_date?.split("-")[0]}, rated ${movie.vote_average}/10 on TMDB.</p>
+    `;
+
+    res.json({ reply });
   } catch (err) {
-    console.error("Body parse error:", err);
-    return res.status(400).json({ reply: "Invalid request body" });
-  }
-
-  const { messages } = body || {};
-  if (!messages || !Array.isArray(messages)) {
-    console.error("Body missing 'messages':", body);
-    return res.status(400).json({ reply: "Invalid request body" });
-  }
-
-  try {
-    // --- Random elements for variation ---
-    const randomPhrases = [
-      "Let’s spin the cinematic wheel!",
-      "Roll the director’s dice!",
-      "Shuffle the film deck!",
-      "Let fate pick a reel!",
-    ];
-    const emojiSet = ["🎬", "🎞️", "🍿", "🎥", "📽️", "🎦"];
-    const emoji = emojiSet[Math.floor(Math.random() * emojiSet.length)];
-    const phrase = randomPhrases[Math.floor(Math.random() * randomPhrases.length)];
-    const seed = Math.floor(Math.random() * 100000);
-
-    // --- Random genre seed to diversify results ---
-    const genreSeeds = [
-      "Action", "Comedy", "Drama", "Horror", "Sci-Fi", "Fantasy",
-      "Thriller", "Romance", "Documentary", "Mystery", "Adventure"
-    ];
-    const randomGenre = genreSeeds[Math.floor(Math.random() * genreSeeds.length)];
-
-    // --- Witty, dynamic system prompt ---
-    const systemPrompt = `
-${emoji} ${phrase} (session ${seed})
-Today’s secret theme: ${randomGenre}.
-
-You are Movie Match, a witty film expert who must NOT repeat the same movie twice in a row.
-Avoid 'The Grand Budapest Hotel' unless it's directly relevant.
-
-Respond using this simple HTML structure:
-<h2 class="movie-title">Here's today's Choice!<br><span class="film-name">[Movie Title]</span></h2>
-<p><b>Summary:[1–2 sentence summary]</p>
-<p><b>Why Watch:[1 sentence reason]</p>
-<p><b>Where to Watch:[short viewing info]</p>
-<p><b>Trivia:[fun fact]</p>
-
-Do NOT use markdown or extra commentary outside this structure.
-Keep it witty, cinematic, and concise.
-`;
-
-
-    // --- Generate the recommendation ---
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // Reliable, fast, and supports temperature
-      temperature: 0.9,     // Add randomness
-      top_p: 1,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...messages,
-      ],
-    });
-
-    const reply = completion.choices[0]?.message?.content || "No reply generated.";
-    res.status(200).json({ reply });
-
-  } catch (error) {
-    console.error("Movie Match API Error:", error);
-    res.status(500).json({
-      reply: "🎞️ Oops! Something went wrong — try again in a moment.",
-    });
+    console.error(err);
+    res.status(500).json({ reply: `⚠️ Error: ${err.message}` });
   }
 }

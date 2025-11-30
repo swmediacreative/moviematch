@@ -34,7 +34,7 @@ async function getTMDBInfo(movieTitle) {
 }
 
 export default async function handler(req, res) {
-  // --- CORS for Hostinger ---
+  // --- CORS for Hostinger or other frontends ---
   res.setHeader("Access-Control-Allow-Origin", "https://moviematch.uk");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -51,6 +51,37 @@ export default async function handler(req, res) {
         .json({ error: "Invalid request: messages missing" });
     }
 
+    const lastUserMessage = messages[messages.length - 1]?.content || "";
+
+    // --- Detect genre keywords for TMDb discovery ---
+    const genreKeywords = [
+      "action","adventure","animation","biography","comedy","crime",
+      "documentary","drama","family","fantasy","historical","horror",
+      "musical","mystery","romance","sci-fi","science fiction","sports",
+      "thriller","war","western"
+    ];
+
+    const matchedGenre = genreKeywords.find(g =>
+      lastUserMessage.toLowerCase().includes(g)
+    );
+
+    // --- Optional: pre-fetch random TMDb movie if genre found ---
+    let tmdbMovie = null;
+    if (matchedGenre) {
+      const TMDB_API_KEY = process.env.TMDB_API_KEY;
+      // A little randomness across pages
+      const page = Math.floor(Math.random() * 5) + 1;
+      const discoverUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&sort_by=popularity.desc&language=en-US&page=${page}`;
+      const discoverRes = await fetch(discoverUrl);
+      const discoverData = await discoverRes.json();
+      if (discoverData.results?.length) {
+        tmdbMovie =
+          discoverData.results[
+            Math.floor(Math.random() * discoverData.results.length)
+          ];
+      }
+    }
+
     const systemPrompt = `
 You are Movie Match, a witty, spoiler-free film expert.
 You always respond in HTML format like this:
@@ -64,8 +95,24 @@ You always respond in HTML format like this:
 Keep it concise, engaging, and spoiler-free.
 `;
 
-    const conversation = [{ role: "system", content: systemPrompt }, ...messages];
+    let conversation;
+    if (tmdbMovie) {
+      // Use TMDb data as the seed
+      conversation = [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: `Use this TMDb data to write your response:\n${JSON.stringify(
+            tmdbMovie
+          )}`
+        }
+      ];
+    } else {
+      // Fallback to normal conversation
+      conversation = [{ role: "system", content: systemPrompt }, ...messages];
+    }
 
+    // --- GPT completion ---
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: conversation,
@@ -75,11 +122,12 @@ Keep it concise, engaging, and spoiler-free.
 
     let reply = completion.choices?.[0]?.message?.content?.trim() || "";
 
-    // --- Extract title & current poster (if any)
+    // --- Extract movie title and current poster
     const titleMatch = reply.match(/<span[^>]*film-name[^>]*>(.*?)<\/span>/i);
     const movieTitle = titleMatch ? titleMatch[1] : null;
     const existingPoster = (reply.match(/<img[^>]*src=['"](.*?)['"]/i) || [])[1];
 
+    // --- Enrich with TMDb poster + cast ---
     if (movieTitle) {
       const { castList, posterPath } = await getTMDBInfo(movieTitle);
 
@@ -106,7 +154,6 @@ Keep it concise, engaging, and spoiler-free.
             `<img src='${posterPath}' alt='${movieTitle} poster'>`
           );
         } else {
-          // no poster in GPT reply, insert after heading
           reply = reply.replace(
             /(<h2[^>]*>[\s\S]*?<\/h2>)/i,
             `$1\n<img src='${posterPath}' alt='${movieTitle} poster'>`
@@ -115,11 +162,15 @@ Keep it concise, engaging, and spoiler-free.
       }
     }
 
+    // --- TMDb attribution for compliance ---
+    reply +=
+      "<p style='font-size:12px;opacity:0.6;'>Movie data provided by <a href='https://www.themoviedb.org/' target='_blank' style='color:#00b2b2;'>TMDb</a>.</p>";
+
     res.status(200).json({ reply });
   } catch (error) {
     console.error("Movie Match API error:", error);
     res
       .status(500)
-      .json({ error: "Server error while contacting OpenAI or TMDB." });
+      .json({ error: "Server error while contacting OpenAI or TMDb." });
   }
 }

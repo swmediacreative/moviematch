@@ -4,9 +4,9 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// 🧠 In-memory cache to prevent duplicate movies during a warm session
+// 🧠 In-memory cache (tracks titles instead of IDs)
 const recentMovies = new Set();
-const MAX_RECENT = 10; // Remember the last 10 picks
+const MAX_RECENT = 10; // Remember the last 10 titles
 
 // 🧩 Helper: fetch cast + poster from TMDb
 async function getTMDBInfo(movieTitle) {
@@ -42,7 +42,6 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "https://moviematch.uk");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
@@ -55,7 +54,7 @@ export default async function handler(req, res) {
 
     const lastUserMessage = messages[messages.length - 1]?.content || "";
 
-    // --- Detect genre keywords (wide list) ---
+    // --- Detect genre keywords ---
     const genreKeywords = [
       "action","adventure","animation","biography","comedy","crime","documentary",
       "drama","family","fantasy","historical","horror","music","musical","mystery",
@@ -67,7 +66,7 @@ export default async function handler(req, res) {
       lastUserMessage.toLowerCase().includes(g)
     );
 
-    // --- TMDb genre ID map (includes common alternates) ---
+    // --- TMDb genre ID map ---
     const genreMap = {
       action: 28, adventure: 12, animation: 16, biography: 36, comedy: 35,
       crime: 80, documentary: 99, drama: 18, family: 10751, fantasy: 14,
@@ -82,12 +81,16 @@ export default async function handler(req, res) {
 
     if (matchedGenre) {
       const TMDB_API_KEY = process.env.TMDB_API_KEY;
-      const randomYear = Math.floor(Math.random() * 56) + 1970; // 1970–2025
-      const randomPage = Math.floor(Math.random() * 500) + 1;   // 1–500
+      const randomPage = Math.floor(Math.random() * 500) + 1;
+      const randomVoteCount = Math.floor(Math.random() * 400) + 10;
+      const randomYearStart = 1970 + Math.floor(Math.random() * 55);
       const genreId = genreMap[matchedGenre];
-      const sortMode = Math.random() > 0.5 ? "popularity.desc" : "vote_average.desc";
+      const sortMode =
+        Math.random() > 0.5 ? "popularity.desc" : "vote_average.desc";
 
-      const discoverUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=en-US&include_adult=false&sort_by=${sortMode}&vote_count.gte=50&primary_release_year=${randomYear}&page=${randomPage}${genreId ? `&with_genres=${genreId}` : ""}`;
+      const discoverUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=en-US&include_adult=false&sort_by=${sortMode}&vote_count.gte=${randomVoteCount}&primary_release_date.gte=${randomYearStart}-01-01&page=${randomPage}${
+        genreId ? `&with_genres=${genreId}` : ""
+      }`;
 
       console.log("🎬 TMDb Discover URL:", discoverUrl);
 
@@ -96,7 +99,7 @@ export default async function handler(req, res) {
 
       if (discoverData.results?.length) {
         const freshResults = discoverData.results.filter(
-          m => !recentMovies.has(m.id)
+          m => !recentMovies.has(m.title?.toLowerCase())
         );
         const selectionPool = freshResults.length
           ? freshResults
@@ -105,9 +108,10 @@ export default async function handler(req, res) {
         tmdbMovie =
           selectionPool[Math.floor(Math.random() * selectionPool.length)];
 
-        // Record chosen movie ID
-        if (tmdbMovie?.id) {
-          recentMovies.add(tmdbMovie.id);
+        // 🧠 Record chosen movie title
+        const key = tmdbMovie?.title?.toLowerCase();
+        if (key) {
+          recentMovies.add(key);
           if (recentMovies.size > MAX_RECENT) {
             const first = [...recentMovies][0];
             recentMovies.delete(first);
@@ -116,10 +120,12 @@ export default async function handler(req, res) {
       }
     }
 
-    // --- System prompt for Movie Match personality ---
+    // --- Movie Match system prompt ---
     const systemPrompt = `
 You are Movie Match, a witty, spoiler-free film expert.
-You always respond in HTML format like this:
+Always recommend a film that hasn’t been mentioned recently — no repeats within this session.
+Avoid overused classics like "Inception", "The Dark Knight", or "Pulp Fiction" unless requested.
+Respond in this HTML format:
 <h2 class='movie-title'>Here's today's Choice!<br><span class='film-name'>[Movie]</span></h2>
 <img src='[poster]' alt='[Movie] poster'>
 <p><b>Summary</b> [summary]</p>
@@ -150,33 +156,26 @@ Keep it concise, witty, and spoiler-free.
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: conversation,
-      temperature: 0.8,
+      temperature: 0.9, // slightly higher for more creative variety
       max_tokens: 400
     });
 
     let reply = completion.choices?.[0]?.message?.content?.trim() || "";
 
-    // --- Extract title and poster ---
+    // --- Extract title & poster ---
     const titleMatch = reply.match(/<span[^>]*film-name[^>]*>(.*?)<\/span>/i);
     const movieTitle = titleMatch ? titleMatch[1] : null;
     const existingPoster = (reply.match(/<img[^>]*src=['"](.*?)['"]/i) || [])[1];
 
-    // --- Enrich with TMDb data ---
+    // --- Enrich with TMDb cast/poster ---
     if (movieTitle) {
       const { castList, posterPath } = await getTMDBInfo(movieTitle);
 
       if (castList) {
-        if (!reply.includes("<b>Cast</b>")) {
-          reply = reply.replace(
-            /(<p><b>Summary<\/b>[^<]*<\/p>)/i,
-            `$1<p><b>Cast</b> ${castList}</p>`
-          );
-        } else {
-          reply = reply.replace(
-            /<p><b>Cast<\/b>[^<]*<\/p>/i,
-            `<p><b>Cast</b> ${castList}</p>`
-          );
-        }
+        reply = reply.replace(
+          /(<p><b>Summary<\/b>[^<]*<\/p>)/i,
+          `$1<p><b>Cast</b> ${castList}</p>`
+        );
       }
 
       if (posterPath) {
@@ -194,7 +193,7 @@ Keep it concise, witty, and spoiler-free.
       }
     }
 
-    // --- TMDb attribution ---
+    // --- Attribution ---
     reply +=
       "<p style='font-size:12px;opacity:0.6;'>Movie data provided by <a href='https://www.themoviedb.org/' target='_blank' style='color:#00b2b2;'>TMDb</a>.</p>";
 

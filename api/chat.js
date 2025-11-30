@@ -34,7 +34,7 @@ async function getTMDBInfo(movieTitle) {
 }
 
 export default async function handler(req, res) {
-  // --- CORS for Hostinger or other frontends ---
+  // --- CORS setup ---
   res.setHeader("Access-Control-Allow-Origin", "https://moviematch.uk");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -46,39 +46,49 @@ export default async function handler(req, res) {
   try {
     const { messages } = req.body;
     if (!messages || !Array.isArray(messages)) {
-      return res
-        .status(400)
-        .json({ error: "Invalid request: messages missing" });
+      return res.status(400).json({ error: "Invalid request: messages missing" });
     }
 
     const lastUserMessage = messages[messages.length - 1]?.content || "";
 
-    // --- Detect genre keywords for TMDb discovery ---
+    // --- Detect genre keywords ---
     const genreKeywords = [
-      "action","adventure","animation","biography","comedy","crime",
-      "documentary","drama","family","fantasy","historical","horror",
-      "musical","mystery","romance","sci-fi","science fiction","sports",
-      "thriller","war","western"
+      "action","adventure","animation","biography","comedy","crime","documentary",
+      "drama","family","fantasy","historical","horror","musical","mystery",
+      "romance","sci-fi","science fiction","sports","thriller","war","western"
     ];
-
     const matchedGenre = genreKeywords.find(g =>
       lastUserMessage.toLowerCase().includes(g)
     );
 
-    // --- Optional: pre-fetch random TMDb movie if genre found ---
+    // --- TMDb genre ID map ---
+    const genreMap = {
+      action: 28, adventure: 12, animation: 16, biography: 36, comedy: 35,
+      crime: 80, documentary: 99, drama: 18, family: 10751, fantasy: 14,
+      historical: 36, horror: 27, musical: 10402, mystery: 9648,
+      romance: 10749, "sci-fi": 878, "science fiction": 878,
+      sports: 10770, thriller: 53, war: 10752, western: 37
+    };
+
+    // --- Pre-fetch random TMDb movie using year+page combo ---
     let tmdbMovie = null;
     if (matchedGenre) {
       const TMDB_API_KEY = process.env.TMDB_API_KEY;
-      // A little randomness across pages
-      const page = Math.floor(Math.random() * 5) + 1;
-      const discoverUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&sort_by=popularity.desc&language=en-US&page=${page}`;
+      const randomYear = Math.floor(Math.random() * 56) + 1970; // 1995–2024
+      const page = Math.floor(Math.random() * 10) + 1; // page 1–10
+      const genreId = genreMap[matchedGenre];
+
+      const discoverUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=en-US&include_adult=false&sort_by=vote_average.desc&primary_release_year=${randomYear}&page=${page}${genreId ? `&with_genres=${genreId}` : ""}`;
+
+      console.log("🎬 TMDb Discover URL:", discoverUrl);
+
       const discoverRes = await fetch(discoverUrl);
       const discoverData = await discoverRes.json();
+
       if (discoverData.results?.length) {
-        tmdbMovie =
-          discoverData.results[
-            Math.floor(Math.random() * discoverData.results.length)
-          ];
+        tmdbMovie = discoverData.results[
+          Math.floor(Math.random() * discoverData.results.length)
+        ];
       }
     }
 
@@ -92,27 +102,26 @@ You always respond in HTML format like this:
 <p><b>Why Watch</b> [reason]</p>
 <p><b>Where to Watch</b> [platform]</p>
 <p><b>Trivia</b> [fun fact]</p>
-Keep it concise, engaging, and spoiler-free.
+Keep it concise, witty, and spoiler-free.
 `;
 
+    // --- Prepare GPT conversation ---
     let conversation;
     if (tmdbMovie) {
-      // Use TMDb data as the seed
       conversation = [
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Use this TMDb data to write your response:\n${JSON.stringify(
+          content: `Use this TMDb movie data to write your witty recommendation in HTML:\n${JSON.stringify(
             tmdbMovie
           )}`
         }
       ];
     } else {
-      // Fallback to normal conversation
       conversation = [{ role: "system", content: systemPrompt }, ...messages];
     }
 
-    // --- GPT completion ---
+    // --- Call GPT ---
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: conversation,
@@ -122,16 +131,15 @@ Keep it concise, engaging, and spoiler-free.
 
     let reply = completion.choices?.[0]?.message?.content?.trim() || "";
 
-    // --- Extract movie title and current poster
+    // --- Extract movie title and existing poster
     const titleMatch = reply.match(/<span[^>]*film-name[^>]*>(.*?)<\/span>/i);
     const movieTitle = titleMatch ? titleMatch[1] : null;
     const existingPoster = (reply.match(/<img[^>]*src=['"](.*?)['"]/i) || [])[1];
 
-    // --- Enrich with TMDb poster + cast ---
+    // --- Enrich with TMDb poster and cast ---
     if (movieTitle) {
       const { castList, posterPath } = await getTMDBInfo(movieTitle);
 
-      // Insert or replace cast
       if (castList) {
         if (!reply.includes("<b>Cast</b>")) {
           reply = reply.replace(
@@ -146,7 +154,6 @@ Keep it concise, engaging, and spoiler-free.
         }
       }
 
-      // Insert or replace poster
       if (posterPath) {
         if (existingPoster) {
           reply = reply.replace(
@@ -162,7 +169,7 @@ Keep it concise, engaging, and spoiler-free.
       }
     }
 
-    // --- TMDb attribution for compliance ---
+    // --- TMDb attribution ---
     reply +=
       "<p style='font-size:12px;opacity:0.6;'>Movie data provided by <a href='https://www.themoviedb.org/' target='_blank' style='color:#00b2b2;'>TMDb</a>.</p>";
 

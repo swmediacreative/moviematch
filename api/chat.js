@@ -4,11 +4,11 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// 🧠 Simple in-memory cache for recently picked movies
+// 🧠 In-memory cache to prevent duplicate movies during a warm session
 const recentMovies = new Set();
-const MAX_RECENT = 10; // Remember last 10 movies (adjust as you like)
+const MAX_RECENT = 10; // Remember the last 10 picks
 
-// 🧩 Helper: fetch cast + poster from TMDB
+// 🧩 Helper: fetch cast + poster from TMDb
 async function getTMDBInfo(movieTitle) {
   try {
     const TMDB_API_KEY = process.env.TMDB_API_KEY;
@@ -55,31 +55,33 @@ export default async function handler(req, res) {
 
     const lastUserMessage = messages[messages.length - 1]?.content || "";
 
-    // --- Detect genre keywords ---
+    // --- Detect genre keywords (wide list) ---
     const genreKeywords = [
       "action","adventure","animation","biography","comedy","crime","documentary",
-      "drama","family","fantasy","historical","horror","musical","mystery",
-      "romance","sci-fi","science fiction","sports","thriller","war","western"
+      "drama","family","fantasy","historical","horror","music","musical","mystery",
+      "romance","science fiction","sci-fi","sports","thriller","war","western",
+      "superhero","noir","psychological","disaster","heist","period","teen",
+      "political","epic","survival"
     ];
     const matchedGenre = genreKeywords.find(g =>
       lastUserMessage.toLowerCase().includes(g)
     );
 
-    // --- TMDb genre ID map ---
+    // --- TMDb genre ID map (includes common alternates) ---
     const genreMap = {
       action: 28, adventure: 12, animation: 16, biography: 36, comedy: 35,
       crime: 80, documentary: 99, drama: 18, family: 10751, fantasy: 14,
-      historical: 36, horror: 27, musical: 10402, mystery: 9648,
-      romance: 10749, "sci-fi": 878, "science fiction": 878,
-      sports: 10770, thriller: 53, war: 10752, western: 37
+      historical: 36, horror: 27, music: 10402, musical: 10402, mystery: 9648,
+      romance: 10749, "science fiction": 878, "sci-fi": 878, sports: 10770,
+      thriller: 53, war: 10752, western: 37, superhero: 28, noir: 80,
+      psychological: 53, disaster: 28, heist: 80, period: 36, teen: 10749,
+      political: 36, epic: 12, survival: 12
     };
 
-    // --- Pre-fetch random TMDb movie using year+page combo ---
     let tmdbMovie = null;
+
     if (matchedGenre) {
       const TMDB_API_KEY = process.env.TMDB_API_KEY;
-
-      // 🎲 Randomize year & page for wide coverage
       const randomYear = Math.floor(Math.random() * 56) + 1970; // 1970–2025
       const randomPage = Math.floor(Math.random() * 500) + 1;   // 1–500
       const genreId = genreMap[matchedGenre];
@@ -93,24 +95,19 @@ export default async function handler(req, res) {
       const discoverData = await discoverRes.json();
 
       if (discoverData.results?.length) {
-        // Filter out recently shown movies
         const freshResults = discoverData.results.filter(
           m => !recentMovies.has(m.id)
         );
-
-        // Fallback if everything’s already seen
         const selectionPool = freshResults.length
           ? freshResults
           : discoverData.results;
 
-        tmdbMovie = selectionPool[
-          Math.floor(Math.random() * selectionPool.length)
-        ];
+        tmdbMovie =
+          selectionPool[Math.floor(Math.random() * selectionPool.length)];
 
-        // Record the chosen movie ID in memory
+        // Record chosen movie ID
         if (tmdbMovie?.id) {
           recentMovies.add(tmdbMovie.id);
-          // Keep cache limited
           if (recentMovies.size > MAX_RECENT) {
             const first = [...recentMovies][0];
             recentMovies.delete(first);
@@ -119,6 +116,7 @@ export default async function handler(req, res) {
       }
     }
 
+    // --- System prompt for Movie Match personality ---
     const systemPrompt = `
 You are Movie Match, a witty, spoiler-free film expert.
 You always respond in HTML format like this:
@@ -132,7 +130,7 @@ You always respond in HTML format like this:
 Keep it concise, witty, and spoiler-free.
 `;
 
-    // --- Prepare GPT conversation ---
+    // --- GPT conversation ---
     let conversation;
     if (tmdbMovie) {
       conversation = [
@@ -158,12 +156,12 @@ Keep it concise, witty, and spoiler-free.
 
     let reply = completion.choices?.[0]?.message?.content?.trim() || "";
 
-    // --- Extract movie title and existing poster
+    // --- Extract title and poster ---
     const titleMatch = reply.match(/<span[^>]*film-name[^>]*>(.*?)<\/span>/i);
     const movieTitle = titleMatch ? titleMatch[1] : null;
     const existingPoster = (reply.match(/<img[^>]*src=['"](.*?)['"]/i) || [])[1];
 
-    // --- Enrich with TMDb poster and cast ---
+    // --- Enrich with TMDb data ---
     if (movieTitle) {
       const { castList, posterPath } = await getTMDBInfo(movieTitle);
 

@@ -4,6 +4,10 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+// 🧠 Simple in-memory cache for recently picked movies
+const recentMovies = new Set();
+const MAX_RECENT = 10; // Remember last 10 movies (adjust as you like)
+
 // 🧩 Helper: fetch cast + poster from TMDB
 async function getTMDBInfo(movieTitle) {
   try {
@@ -74,11 +78,14 @@ export default async function handler(req, res) {
     let tmdbMovie = null;
     if (matchedGenre) {
       const TMDB_API_KEY = process.env.TMDB_API_KEY;
-      const randomYear = Math.floor(Math.random() * 56) + 1970; // 1995–2024
-      const page = Math.floor(Math.random() * 10) + 1; // page 1–10
-      const genreId = genreMap[matchedGenre];
 
-      const discoverUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=en-US&include_adult=false&sort_by=vote_average.desc&primary_release_year=${randomYear}&page=${page}${genreId ? `&with_genres=${genreId}` : ""}`;
+      // 🎲 Randomize year & page for wide coverage
+      const randomYear = Math.floor(Math.random() * 56) + 1970; // 1970–2025
+      const randomPage = Math.floor(Math.random() * 500) + 1;   // 1–500
+      const genreId = genreMap[matchedGenre];
+      const sortMode = Math.random() > 0.5 ? "popularity.desc" : "vote_average.desc";
+
+      const discoverUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=en-US&include_adult=false&sort_by=${sortMode}&vote_count.gte=50&primary_release_year=${randomYear}&page=${randomPage}${genreId ? `&with_genres=${genreId}` : ""}`;
 
       console.log("🎬 TMDb Discover URL:", discoverUrl);
 
@@ -86,9 +93,29 @@ export default async function handler(req, res) {
       const discoverData = await discoverRes.json();
 
       if (discoverData.results?.length) {
-        tmdbMovie = discoverData.results[
-          Math.floor(Math.random() * discoverData.results.length)
+        // Filter out recently shown movies
+        const freshResults = discoverData.results.filter(
+          m => !recentMovies.has(m.id)
+        );
+
+        // Fallback if everything’s already seen
+        const selectionPool = freshResults.length
+          ? freshResults
+          : discoverData.results;
+
+        tmdbMovie = selectionPool[
+          Math.floor(Math.random() * selectionPool.length)
         ];
+
+        // Record the chosen movie ID in memory
+        if (tmdbMovie?.id) {
+          recentMovies.add(tmdbMovie.id);
+          // Keep cache limited
+          if (recentMovies.size > MAX_RECENT) {
+            const first = [...recentMovies][0];
+            recentMovies.delete(first);
+          }
+        }
       }
     }
 

@@ -128,7 +128,7 @@ Respond in this HTML format:
 <h2 class='movie-title'>Here's today's Choice!<br><span class='film-name'>[Movie]</span></h2>
 <img src='[poster]' alt='[Movie] poster'>
 <p><b>Summary</b> [summary]</p>
-<p><b>Cast</b> [main actors]</p>
+<!-- Cast will be added later -->
 <p><b>Why Watch</b> [reason]</p>
 <p><b>Where to Watch</b> [platform]</p>
 <p><b>Trivia</b> [fun fact]</p>
@@ -155,7 +155,7 @@ Keep it concise, witty, and spoiler-free.
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: conversation,
-      temperature: 0.9, // slightly higher for more creative variety
+      temperature: 0.9,
       max_tokens: 400
     });
 
@@ -170,6 +170,10 @@ Keep it concise, witty, and spoiler-free.
     if (movieTitle) {
       const { castList, posterPath } = await getTMDBInfo(movieTitle);
 
+      // 🧹 Remove GPT's own cast paragraph (just in case)
+      reply = reply.replace(/<p><b>Cast<\/b>.*?<\/p>/i, "");
+
+      // 🎭 Insert verified TMDb cast right after Summary
       if (castList) {
         reply = reply.replace(
           /(<p><b>Summary<\/b>[^<]*<\/p>)/i,
@@ -177,6 +181,7 @@ Keep it concise, witty, and spoiler-free.
         );
       }
 
+      // 🖼 Replace or insert poster
       if (posterPath) {
         if (existingPoster) {
           reply = reply.replace(

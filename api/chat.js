@@ -8,7 +8,7 @@ const client = new OpenAI({
 const recentMovies = new Set();
 const MAX_RECENT = 10; // Remember the last 10 titles
 
-// 🧩 Helper: fetch cast + poster from TMDb
+// 🧩 Helper: fetch cast, poster, runtime, and UK rating from TMDb
 async function getTMDBInfo(movieTitle) {
   try {
     const TMDB_API_KEY = process.env.TMDB_API_KEY;
@@ -24,13 +24,29 @@ async function getTMDBInfo(movieTitle) {
       ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
       : null;
 
+    // 🎭 Cast
     const creditsRes = await fetch(
       `https://api.themoviedb.org/3/movie/${movieId}/credits?api_key=${TMDB_API_KEY}`
     );
     const creditsData = await creditsRes.json();
     const castList = creditsData.cast?.slice(0, 5).map(a => a.name).join(", ");
 
-    return { castList, posterPath };
+    // ⏱ Runtime
+    const detailsRes = await fetch(
+      `https://api.themoviedb.org/3/movie/${movieId}?api_key=${TMDB_API_KEY}&language=en-US`
+    );
+    const detailsData = await detailsRes.json();
+    const runtime = detailsData.runtime ? `${detailsData.runtime} min` : null;
+
+    // 🇬🇧 UK Rating
+    const releaseRes = await fetch(
+      `https://api.themoviedb.org/3/movie/${movieId}/release_dates?api_key=${TMDB_API_KEY}`
+    );
+    const releaseData = await releaseRes.json();
+    const ukRelease = releaseData.results?.find(r => r.iso_3166_1 === "GB");
+    const ukCert = ukRelease?.release_dates?.[0]?.certification || null;
+
+    return { castList, posterPath, runtime, ukCert };
   } catch (err) {
     console.error("TMDB fetch failed:", err);
     return {};
@@ -128,7 +144,7 @@ Respond in this HTML format:
 <h2 class='movie-title'>Here's today's Choice!<br><span class='film-name'>[Movie]</span></h2>
 <img src='[poster]' alt='[Movie] poster'>
 <p><b>Summary</b> [summary]</p>
-<!-- Cast will be added later -->
+<!-- Cast, runtime, and UK rating will be added later -->
 <p><b>Why Watch</b> [reason]</p>
 <p><b>Where to Watch</b> [platform]</p>
 <p><b>Trivia</b> [fun fact]</p>
@@ -166,12 +182,27 @@ Keep it concise, witty, and spoiler-free.
     const movieTitle = titleMatch ? titleMatch[1] : null;
     const existingPoster = (reply.match(/<img[^>]*src=['"](.*?)['"]/i) || [])[1];
 
-    // --- Enrich with TMDb cast/poster ---
+    // --- Enrich with TMDb cast/poster/runtime/UK rating ---
     if (movieTitle) {
-      const { castList, posterPath } = await getTMDBInfo(movieTitle);
+      const { castList, posterPath, runtime, ukCert } = await getTMDBInfo(movieTitle);
 
       // 🧹 Remove GPT's own cast paragraph (just in case)
       reply = reply.replace(/<p><b>Cast<\/b>.*?<\/p>/i, "");
+
+      // 🏷️ Add runtime + UK rating under the title
+      if (runtime || ukCert) {
+        const extraInfo = [
+          ukCert ? `<span class='uk-cert'>UK Rating: ${ukCert}</span>` : "",
+          runtime ? `<span class='runtime'>Runtime: ${runtime}</span>` : ""
+        ]
+          .filter(Boolean)
+          .join(" | ");
+
+        reply = reply.replace(
+          /(<span[^>]*film-name[^>]*>.*?<\/span>)/i,
+          `$1<br><small class='extra-info'>${extraInfo}</small>`
+        );
+      }
 
       // 🎭 Insert verified TMDb cast right after Summary
       if (castList) {
